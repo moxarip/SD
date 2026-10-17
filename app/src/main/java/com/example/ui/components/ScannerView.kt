@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -58,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.example.engine.FileRescueManager
 import com.example.engine.StorageScanner
 import com.example.ui.RescueUiState
+import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.CyanAccentDark
 import com.example.ui.theme.EmeraldRescue
@@ -73,6 +75,7 @@ fun ScannerView(
     onStartScan: (StorageScanner.ScanMode, Uri?) -> Unit,
     onStopScan: () -> Unit,
     onNavigateToResults: () -> Unit,
+    onNavigateToUsbOtg: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isAr = uiState.appLanguage == "ar"
@@ -259,15 +262,15 @@ fun ScannerView(
             Spacer(modifier = Modifier.height(10.dp))
 
             ScanModeCard(
-                title = if (isAr) "فحص مجلد مخصص / بطاقة SD (SAF)" else "Custom Directory / SD Card",
+                title = if (isAr) "استخراج بطاقة SD عبر USB / سيزوكي (تجاوز الفرمتة)" else "USB-OTG / SD Card & Shizuku (Bypass Format)",
                 description = if (isAr)
-                    "استعراض أي مجلد من اختيارك (مثل مجلد WhatsApp أو Telegram أو بطاقة ذاكرة)"
+                    "اتصال مباشر بقطاعات الـ USB التالفة واستخدام صلاحيات سيزوكي لاستخراج الملفات دون الحاجة لفرمتة البطاقة"
                 else
-                    "Target any specific folder, SD card, or external drive with full access",
-                icon = Icons.Default.FolderOpen,
-                accentColor = Color(0xFFA855F7),
-                testTag = "saf_scan_card",
-                onClick = { safFolderLauncher.launch(null) }
+                    "Direct SCSI raw sector carving & Shizuku privileges for unmounted USB cards that ask to format",
+                icon = Icons.Default.Usb,
+                accentColor = AmberWarning,
+                testTag = "otg_shizuku_mode_card",
+                onClick = onNavigateToUsbOtg
             )
         }
 

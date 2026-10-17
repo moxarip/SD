@@ -23,7 +23,9 @@ enum class FileSourceType(val label: String, val labelAr: String) {
     TRASHED("Recycle Bin", "سلة المهملات"),
     CACHE_THUMBNAIL("App Cache / Thumbs", "ذاكرة التخزين المؤقت"),
     DEEP_CARVED("Deep Storage Carving", "بصمة القطاعات العميقة"),
-    SAF_CUSTOM("Custom SAF Directory", "مجلد خارجي مخصص")
+    SAF_CUSTOM("Custom SAF Directory", "مجلد خارجي مخصص"),
+    USB_OTG_RAW_SECTOR("Raw USB-OTG Direct", "قطاعات USB المباشرة الخام"),
+    SHIZUKU_ELEVATED("Shizuku Elevated Shell", "صلاحيات سيزوكي المتقدمة")
 }
 
 data class RescuedFile(

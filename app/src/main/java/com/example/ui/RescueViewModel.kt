@@ -1,13 +1,26 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.engine.DetectedStorageVolume
 import com.example.engine.FileCarver
 import com.example.engine.FileRepairEngine
 import com.example.engine.FileRescueManager
+import com.example.engine.ShizukuManager
+import com.example.engine.ShizukuStatus
 import com.example.engine.StorageScanner
+import com.example.engine.StorageVolumeDetector
+import com.example.engine.UsbDeviceInfo
+import com.example.engine.UsbOtgManager
 import com.example.model.FileCategory
 import com.example.model.FileHealthState
 import com.example.model.RepairReport
@@ -26,6 +39,7 @@ import java.util.Locale
 
 enum class AppTab {
     SCANNER,
+    USB_OTG,
     RESULTS,
     REPAIR,
     STORAGE,
@@ -51,7 +65,15 @@ data class RescueUiState(
     val isAnalyzingStorage: Boolean = false,
     val salvagedFiles: List<RescuedFile> = emptyList(),
     val appLanguage: String = if (Locale.getDefault().language.startsWith("ar")) "ar" else "en",
-    val snackbarMessage: String? = null
+    val snackbarMessage: String? = null,
+
+    // USB-OTG & Shizuku state
+    val connectedUsbDevices: List<UsbDeviceInfo> = emptyList(),
+    val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_INSTALLED_OR_RUNNING,
+    val detectedVolumes: List<DetectedStorageVolume> = emptyList(),
+    val isUsbCarving: Boolean = false,
+    val usbCarveStatus: String = "",
+    val elevatedBlockNodes: List<String> = emptyList()
 )
 
 class RescueViewModel(application: Application) : AndroidViewModel(application) {
@@ -60,14 +82,52 @@ class RescueViewModel(application: Application) : AndroidViewModel(application) 
     val uiState: StateFlow<RescueUiState> = _uiState.asStateFlow()
 
     private var scanJob: Job? = null
+    private var usbJob: Job? = null
+
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED,
+                UsbManager.ACTION_USB_DEVICE_DETACHED,
+                UsbOtgManager.ACTION_USB_PERMISSION -> {
+                    refreshUsbAndShizuku()
+                }
+            }
+        }
+    }
 
     init {
         loadExistingSalvagedFiles()
         refreshStorageAnalysis()
+        refreshUsbAndShizuku()
+
+        // Register USB receiver
+        try {
+            val filter = IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+                addAction(UsbOtgManager.ACTION_USB_PERMISSION)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                application.registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                application.registerReceiver(usbReceiver, filter)
+            }
+        } catch (_: Exception) {}
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            getApplication<Application>().unregisterReceiver(usbReceiver)
+        } catch (_: Exception) {}
     }
 
     fun setTab(tab: AppTab) {
         _uiState.update { it.copy(currentTab = tab) }
+        if (tab == AppTab.USB_OTG) {
+            refreshUsbAndShizuku()
+        }
     }
 
     fun toggleLanguage() {
@@ -87,6 +147,113 @@ class RescueViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setHealthFilter(health: FileHealthState?) {
         _uiState.update { it.copy(selectedHealth = health) }
+    }
+
+    fun refreshUsbAndShizuku() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val usbList = UsbOtgManager.listConnectedUsbDevices(context)
+            val shizuku = ShizukuManager.getStatus()
+            val volumes = StorageVolumeDetector.getDetectedVolumes(context)
+            val elevated = if (shizuku == ShizukuStatus.READY) {
+                ShizukuManager.listElevatedBlockStorage()
+            } else emptyList()
+
+            _uiState.update {
+                it.copy(
+                    connectedUsbDevices = usbList,
+                    shizukuStatus = shizuku,
+                    detectedVolumes = volumes,
+                    elevatedBlockNodes = elevated
+                )
+            }
+        }
+    }
+
+    fun requestUsbPermission(device: UsbDevice) {
+        UsbOtgManager.requestPermission(getApplication(), device)
+    }
+
+    fun requestShizukuPermission() {
+        ShizukuManager.requestPermission()
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1000)
+            refreshUsbAndShizuku()
+        }
+    }
+
+    fun startRawUsbCarve(device: UsbDevice, maxMegaBytes: Int = 128) {
+        usbJob?.cancel()
+        _uiState.update {
+            it.copy(
+                isUsbCarving = true,
+                usbCarveStatus = if (it.appLanguage == "ar") "بدء الاتصال المباشر بقطاعات USB..." else "Connecting to raw USB sectors..."
+            )
+        }
+
+        usbJob = viewModelScope.launch(Dispatchers.IO) {
+            val carved = UsbOtgManager.carveRawUsbStorage(
+                context = getApplication(),
+                device = device,
+                maxMegaBytesToScan = maxMegaBytes,
+                onProgress = { scannedBytes, foundCount, phase ->
+                    _uiState.update {
+                        it.copy(
+                            usbCarveStatus = "$phase | Found: $foundCount"
+                        )
+                    }
+                }
+            )
+
+            loadExistingSalvagedFiles()
+
+            _uiState.update { state ->
+                val newAll = (carved + state.allFiles).distinctBy { it.id }
+                state.copy(
+                    isUsbCarving = false,
+                    allFiles = newAll,
+                    currentTab = AppTab.RESULTS,
+                    snackbarMessage = if (state.appLanguage == "ar")
+                        "تم استخراج ${carved.size} ملف من شريحة الـ USB بدون فورمات!"
+                    else
+                        "Carved ${carved.size} files directly from raw USB without formatting!"
+                )
+            }
+        }
+    }
+
+    fun startShizukuCarve(targetPath: String) {
+        _uiState.update {
+            it.copy(
+                isUsbCarving = true,
+                usbCarveStatus = if (it.appLanguage == "ar") "فحص الدليل بصلاحيات سيزوكي المتقدمة..." else "Scanning elevated directory via Shizuku..."
+            )
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val carved = ShizukuManager.carveWithShizuku(
+                context = getApplication(),
+                targetPath = targetPath,
+                onProgress = { count, status ->
+                    _uiState.update { it.copy(usbCarveStatus = status) }
+                }
+            )
+
+            loadExistingSalvagedFiles()
+
+            _uiState.update { state ->
+                val newAll = (carved + state.allFiles).distinctBy { it.id }
+                state.copy(
+                    isUsbCarving = false,
+                    allFiles = newAll,
+                    currentTab = AppTab.RESULTS,
+                    snackbarMessage = if (state.appLanguage == "ar")
+                        "تم استخراج ${carved.size} ملفات بصلاحيات سيزوكي بنجاح!"
+                    else
+                        "Salvaged ${carved.size} files via Shizuku elevated shell!"
+                )
+            }
+        }
     }
 
     fun startScan(mode: StorageScanner.ScanMode, customUri: Uri? = null) {
@@ -141,8 +308,10 @@ class RescueViewModel(application: Application) : AndroidViewModel(application) 
 
     fun stopScan() {
         scanJob?.cancel()
+        usbJob?.cancel()
         _uiState.update {
             it.copy(
+                isUsbCarving = false,
                 scanStats = it.scanStats.copy(
                     isScanning = false,
                     scanPhase = "Scan Stopped",
@@ -231,7 +400,6 @@ class RescueViewModel(application: Application) : AndroidViewModel(application) 
                 }
             )
 
-            // Generate report manifest
             FileRescueManager.generateRecoveryReport(getApplication(), rescuedList)
 
             _uiState.update { state ->

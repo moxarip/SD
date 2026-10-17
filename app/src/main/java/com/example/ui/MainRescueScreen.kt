@@ -28,11 +28,13 @@ import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -72,6 +74,7 @@ import com.example.ui.components.ResultsView
 import com.example.ui.components.SalvagedFilesView
 import com.example.ui.components.ScannerView
 import com.example.ui.components.StorageHealthView
+import com.example.ui.components.UsbOtgView
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.EmeraldRescue
@@ -217,7 +220,51 @@ fun MainRescueScreen(
                         modifier = Modifier.testTag("nav_scanner")
                     )
 
-                    // 2. Results Tab
+                    // 2. USB-OTG & Shizuku Tab
+                    NavigationBarItem(
+                        selected = uiState.currentTab == AppTab.USB_OTG,
+                        onClick = { viewModel.setTab(AppTab.USB_OTG) },
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (uiState.connectedUsbDevices.isNotEmpty()) {
+                                        Badge(
+                                            containerColor = AmberWarning,
+                                            contentColor = Color.Black
+                                        ) {
+                                            Text(
+                                                text = uiState.connectedUsbDevices.size.toString(),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = if (uiState.currentTab == AppTab.USB_OTG) Icons.Default.Usb else Icons.Outlined.Usb,
+                                    contentDescription = "USB & Shizuku"
+                                )
+                            }
+                        },
+                        label = {
+                            Text(
+                                text = if (isAr) "USB / سيزوكي" else "USB / SD",
+                                fontSize = 11.sp,
+                                fontWeight = if (uiState.currentTab == AppTab.USB_OTG) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = AmberWarning,
+                            selectedTextColor = AmberWarning,
+                            indicatorColor = AmberWarning.copy(alpha = 0.2f),
+                            unselectedIconColor = Slate400,
+                            unselectedTextColor = Slate400
+                        ),
+                        modifier = Modifier.testTag("nav_usb_otg")
+                    )
+
+                    // 3. Results Tab
                     NavigationBarItem(
                         selected = uiState.currentTab == AppTab.RESULTS,
                         onClick = { viewModel.setTab(AppTab.RESULTS) },
@@ -374,7 +421,20 @@ fun MainRescueScreen(
                                 uiState = uiState,
                                 onStartScan = { mode, uri -> viewModel.startScan(mode, uri) },
                                 onStopScan = { viewModel.stopScan() },
-                                onNavigateToResults = { viewModel.setTab(AppTab.RESULTS) }
+                                onNavigateToResults = { viewModel.setTab(AppTab.RESULTS) },
+                                onNavigateToUsbOtg = { viewModel.setTab(AppTab.USB_OTG) }
+                            )
+                        }
+
+                        AppTab.USB_OTG -> {
+                            UsbOtgView(
+                                uiState = uiState,
+                                onRequestUsbPermission = { viewModel.requestUsbPermission(it) },
+                                onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
+                                onStartRawUsbCarve = { device, mb -> viewModel.startRawUsbCarve(device, mb) },
+                                onStartShizukuCarve = { path -> viewModel.startShizukuCarve(path) },
+                                onRefresh = { viewModel.refreshUsbAndShizuku() },
+                                onStopScan = { viewModel.stopScan() }
                             )
                         }
 
